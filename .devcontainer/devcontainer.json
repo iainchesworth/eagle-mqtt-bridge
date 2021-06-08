@@ -1,0 +1,12 @@
+{
+    "image": "eagle-mqtt-bridge:v0.0.1-beta1",
+    "forwardPorts": [3000],
+    "containerEnv": {
+        "MQTT_HOST": "192.168.1.171",
+        "MQTT_PASS": "vHDrd3WGqvUS53bIPPqO",
+        "MQTT_TOPIC": "eagle",
+        "MQTT_USER": "eagletomqtt_bridge",
+        "LOG_LEVEL": "debug",
+        "LISTEN_PORT": "3000"
+    }
+}

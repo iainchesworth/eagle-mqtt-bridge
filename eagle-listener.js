@@ -30,76 +30,100 @@ http.get('/', function (req, res) {
 
 http.listen(port, () => logger.info(`Listening for Eagle messages on port ${port}`))
 
+const processInstantaneousDemand = function (node) {
+    logger.debug(node)
+
+    var mult = parseInt(node.multiplier[0], 16)
+    var multiplier = mult ? mult : 1  //If zero use 1
+    var div = parseInt(node.divisor[0], 16)
+    var divisor = div ? div : 1 //If zero use 1
+
+    // Note that demand is in kW (if UoM is 0x00)
+    var demand = parseInt(node.demand[0], 16)
+
+    if (demand > 2147483648) {
+        // Solar feed in turns the demand into a negative value but we see that as an unsigned int (so 0xfff....)
+        logger.debug("Converting demand to negative value ... solar feed-in presumably")
+        demand = demand - 4294967295;
+    }
+
+    var value = parseInt(((demand * multiplier) / divisor) * 1000)
+
+    var message = { 'meter/demand': value }
+    return message
+}
+
+const processCurrentSummation = function (node) {
+    logger.debug(node)
+
+    var mult = parseInt(node.multiplier[0], 16)
+    var multiplier = mult ? mult : 1  //If zero use 1
+    var div = parseInt(node.divisor[0], 16)
+    var divisor = div ? div : 1 //If zero use 1
+
+    var delivered = parseInt(node.summationdelivered[0], 16)
+    var dvalue = hires ? parseInt(((delivered * multiplier) / divisor) * 1000) : parseInt((delivered * multiplier) / divisor)
+
+    var received = parseInt(node.summationreceived[0], 16)
+    var rvalue = hires ? parseInt(((received * multiplier) / divisor) * 1000) : parseInt((received * multiplier) / divisor)
+
+    var message = { 'meter/delivered': dvalue, 'meter/received': rvalue }
+    return message
+}
+
+const processConnectionStatusAndNetworkInfo = function (node) {
+    logger.debug(node)
+
+    // There's a bug in firmware which doesn't provide the ConnectionStatus fragment.  It appears to
+    // send two NetworkInfo fragments with different contents.
+
+    if ("status" in node) {
+        var status = node.status[0]
+        var signal = parseInt(node.linkstrength[0], 16)
+        var channel = parseInt(node.channel[0], 10)
+
+        var message = { 'zigbee/status': status, 'zigbee/signal': signal, 'zigbee/channel': channel }
+    }
+    else {
+        // This is a partial ConnectionStatus fragment...only do the available fields
+        var channel = parseInt(node.channel[0], 10)
+
+        var message = { 'zigbee/channel': channel }
+    }
+
+    return message
+}
+
+const processPriceCluster = function (node) {
+    logger.info(node)
+
+    var price = parseInt(node.price[0], 16)
+    var tier = parseInt(node.tier[0], 16)
+    var message = { 'pricing/price': price, 'pricing/tier': tier }
+
+    return message
+}
+
 const processMessage = function (msg) {
     switch (Object.keys(msg)[0]) {
         case 'instantaneousdemand':
             // Current demand in W
-            var node = msg.instantaneousdemand[0]
-            var mult = parseInt(node.multiplier[0], 16)
-            var multiplier = mult ? mult : 1  //If zero use 1
-            var div = parseInt(node.divisor[0], 16)
-            var divisor = div ? div : 1 //If zero use 1
-            var demand = parseInt(node.demand[0], 16)
-            var value = parseInt(((demand * multiplier) / divisor) * 1000)
-            //{ devicemacid: [ '0xd8d5b90000003e58' ],
-            //  metermacid: [ '0x00078100001d2c64' ],
-            //  timestamp: [ '0x246d0178' ],
-            //  demand: [ '0x0002d9' ],
-            //  multiplier: [ '0x00000001' ],
-            //  divisor: [ '0x000003e8' ],
-            //  unitofmeasure: [ '0x00' ],
-            //  digitsright: [ '0x03' ],
-            //  digitsleft: [ '0x06' ],
-            //  suppressleadingzero: [ 'Y' ],
-            //  protocol: [ '' ],
-            //  port: [ '/dev/ttySP0' ] }
-            var message = { 'meter/demand': value }
+            var message = processInstantaneousDemand(msg.instantaneousdemand[0])
             break
         case 'currentsummation':
-        // EAGLE-200 uploader specification changes this tag (see section 2.7)
+            // EAGLE-200 uploader specification changes this tag (see section 2.7)
+            var message = processCurrentSummation(msg.currentsummation[0])
+            break
         case 'currentsummationdelivered':
             // Current meter reading in kWh (W if hires)
-            var node = msg.currentsummationdelivered[0]
-            var mult = parseInt(node.multiplier[0], 16)
-            var multiplier = mult ? mult : 1  //If zero use 1
-            var div = parseInt(node.divisor[0], 16)
-            var divisor = div ? div : 1 //If zero use 1
-            var delivered = parseInt(node.summationdelivered[0], 16)
-            var dvalue = hires ? parseInt(((delivered * multiplier) / divisor) * 1000) : parseInt((delivered * multiplier) / divisor)
-            var received = parseInt(node.summationreceived[0], 16)
-            var rvalue = hires ? parseInt(((received * multiplier) / divisor) * 1000) : parseInt((received * multiplier) / divisor)
-            //{ devicemacid: [ '0xd8d5b90000003e58' ],
-            //  metermacid: [ '0x00078100001d2c64' ],
-            //  timestamp: [ '0x246d00c8' ],
-            //  summationdelivered: [ '0x0000000006953720' ],
-            //  summationreceived: [ '0x0000000000000000' ],
-            //  multiplier: [ '0x00000001' ],
-            //  divisor: [ '0x000003e8' ],
-            //  digitsright: [ '0x01' ],
-            //  digitsleft: [ '0x06' ],
-            //  suppressleadingzero: [ 'Y' ],
-            //  port: [ '/dev/ttySP0' ] }
-            var message = { 'meter/delivered': dvalue, 'meter/received': rvalue }
+            var message = processCurrentSummation(msg.currentsummationdelivered[0])
             break
         case 'connectionstatus':
-        // EAGLE-200 uploader specification renames this tag (see section 2.2)
-        //  metermacid: [ '' ],
-        //  protocol: [ '' ]
+            // EAGLE-200 uploader specification renames this tag (see section 2.2)
+            var message = processConnectionStatusAndNetworkInfo(msg.connectionstatus[0])
+            break
         case 'networkinfo':
-            var node = msg.networkinfo[0]
-            var status = node.status[0]
-            var signal = parseInt(node.linkstrength[0], 16)
-            var channel = parseInt(node.channel[0], 10)
-            //{ devicemacid: [ '0xd8d5b90000003e58' ],
-            //  coordmacid: [ '0x00078100001d2c64' ],
-            //  status: [ 'Connected' ],
-            //  description: [ 'Successfully Joined' ],
-            //  extpanid: [ '0x00078100001d2c64' ],
-            //  channel: [ '20' ],
-            //  shortaddr: [ '0x3cc9' ],
-            //  linkstrength: [ '0x5a' ],
-            //  port: [ '/dev/ttySP0' ] }
-            var message = { 'zigbee/status': status, 'zigbee/signal': signal, 'zigbee/channel': channel }
+            var message = processConnectionStatusAndNetworkInfo(msg.networkinfo[0])
             break
         case 'messagecluster':
             //{ devicemacid: [ '0xd8d5b90000003e58' ],
@@ -130,21 +154,7 @@ const processMessage = function (msg) {
             //  port: [ '/dev/ttySP0', '/dev/ttySP0' ] }
             break
         case 'pricecluster':
-            var node = msg.pricecluster[0]
-            var price = parseInt(node.price[0], 16)
-            var tier = parseInt(node.tier[0], 16)
-            //{ devicemacid: [ '0xd8d5b90000003e58' ],
-            //  metermacid: [ '0x00078100001d2c64' ],
-            //  timestamp: [ '0xffffffff' ],
-            //  price: [ '0x00000048' ],
-            //  currency: [ '0x0348' ],
-            //  trailingdigits: [ '0x03' ],
-            //  tier: [ '0x01' ],
-            //  starttime: [ '0xffffffff' ],
-            //  duration: [ '0xffff' ],
-            //  ratelabel: [ 'Set by User' ],
-            //  port: [ '/dev/ttySP0' ] }
-            var message = { 'pricing/price': price, 'pricing/tier': tier }
+            var message = processPriceCluster(msg.pricecluster[0])
             break
         case 'timecluster':
             //{ devicemacid: [ '0xd8d5b90000003e58' ],

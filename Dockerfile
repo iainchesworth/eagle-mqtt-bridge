@@ -4,15 +4,15 @@
 
 # stage 2: copy the output and run it in production
 
-FROM node:lts-alpine
+FROM node:16-alpine
 
 RUN apk add dumb-init
 
 ENV NODE_ENV production
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
-COPY --chown=node:node . .
+COPY *.js* /app
 
 RUN npm ci --only=production
 
